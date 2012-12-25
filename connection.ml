@@ -8,28 +8,6 @@ exception InvalidVersion
 
 let global_timeout = 10.
 
-let wait_read ?(timeout=global_timeout) s =
-	if not (Thread.wait_timed_read s timeout) then
-		raise Timeout
-(*
-	let (r, _, _) = Thread.select [s] [] [] global_timeout in
-	if r = [] then
-		raise Timeout
-	else
-		()
-*)
-
-let wait_write s =
-	if not (Thread.wait_timed_write s global_timeout) then
-		raise Timeout
-(*
-	let (_, r, _) = Thread.select [] [s] [] global_timeout in
-	if r = [] then
-		raise Timeout
-	else
-		()
-*)
-
 let binstring_of_int i =
 	let s = String.create 4 in
 	let b1 = i lsr 24 in
@@ -51,22 +29,40 @@ let int_of_binstring s =
 	let i = i + ((Char.code s.[0]) lsl 24) in
 	i
 
+(* with bugfix *)
+let with_timeout t f =
+	let end_time = (Unix.gettimeofday ()) +. t in
+	let rec loop () =
+		try_lwt
+			Lwt_unix.with_timeout t f
+		with
+			| Lwt_unix.Timeout ->
+				let now = Unix.gettimeofday () in
+				if now < end_time then
+					loop ()
+				else
+					Lwt.fail Lwt_unix.Timeout
+	in
+	loop ()
+
 (**********************************************************************************************************)
 
 let send_string t v offset len =
 	let rec loop p = function
-		| 0 -> ()
+		| 0 -> Lwt.return ()
 		| tl ->
-			wait_write t.socket;
-			let wr = Unix.write t.socket v p tl in
+			lwt wr = with_timeout global_timeout (fun () -> lwt () = Lwt_unix.wait_write t.socket in Lwt_unix.write t.socket v p tl) in
 			if wr = 0 then
-				raise Timeout
+			begin
+				Lwt.fail Timeout
+			end
 			else
 				loop (p+wr) (tl-wr)
 	in
-	Unix.setsockopt t.socket Unix.TCP_NODELAY false;
-	loop offset len;
-	Unix.setsockopt t.socket Unix.TCP_NODELAY true
+	Lwt_unix.setsockopt t.socket Unix.TCP_NODELAY false;
+	lwt () = loop offset len in
+	Lwt_unix.setsockopt t.socket Unix.TCP_NODELAY true;
+	Lwt.return ()
 
 let send_full_string t s =
 	send_string t s 0 (String.length s)
@@ -82,12 +78,14 @@ let send_value t v =
 
 let rec write_from_bigarray t a offset len =
 	let rec loop p = function
-		| 0 -> ()
+		| 0 -> Lwt.return ()
 		| tl ->
-			wait_write t.socket;
-			let wr = L_bigarray.write t.socket a p tl in
+			lwt () = with_timeout global_timeout (fun () -> Lwt_unix.wait_write t.socket) in
+			let wr = L_bigarray.write (Lwt_unix.unix_file_descr t.socket) a p tl in
 			if wr = 0 then
-				raise Timeout
+			begin
+				Lwt.fail Timeout
+			end
 			else
 				loop (p+wr) (tl-wr)
 	in
@@ -97,37 +95,42 @@ let rec write_from_bigarray t a offset len =
 
 let read_string ?timeout t len =
 	let buf = String.create len in
+	let timeout = match timeout with | None -> global_timeout | Some t -> t in
 	let rec loop p = function
-		| 0 -> ()
+		| 0 -> Lwt.return ()
 		| tl ->
-			wait_read ?timeout t.socket;
-			let rd = Unix.read t.socket buf p tl in
+			lwt rd = with_timeout timeout (fun () -> lwt () = Lwt_unix.wait_read t.socket in Lwt_unix.read t.socket buf p tl) in
 			if rd = 0 then
-				raise Timeout
+			begin
+				Lwt.fail Timeout
+			end
 			else
 				loop (p+rd) (tl-rd)
 	in
-	loop 0 len;
-	buf
+	lwt () = loop 0 len in
+	Lwt.return buf
 
 let read_bin_int ?timeout t =
-	let s = read_string ?timeout t 4 in
-	int_of_binstring s
+	lwt s = read_string ?timeout t 4 in
+	let r = int_of_binstring s in
+	Lwt.return r
 
 let read_value ?timeout t =
-	let len = read_bin_int ?timeout t in
-	let encoded = read_string t len in
+	lwt len = read_bin_int ?timeout t in
+	lwt encoded = read_string t len in
 	let v = Marshal.from_string encoded 0 in
-	v
+	Lwt.return v
 
 let read_to_bigarray t a offset len =
 	let rec loop p = function
-		| 0 -> ()
+		| 0 -> Lwt.return ()
 		| tl ->
-			wait_read t.socket;
-			let rd = L_bigarray.read t.socket a p tl in
+			lwt () = with_timeout global_timeout (fun () -> Lwt_unix.wait_read t.socket) in
+			let rd = L_bigarray.read (Lwt_unix.unix_file_descr t.socket) a p tl in
 			if rd = 0 then
-				raise Timeout
+			begin
+				Lwt.fail Timeout
+			end
 			else
 				loop (p+rd) (tl-rd)
 	in
@@ -136,20 +139,25 @@ let read_to_bigarray t a offset len =
 (**********************************************************************************************************)
 
 let request t v =
-	send_value t v;
+	lwt () = send_value t v in
 	read_value t
 
 let disconnect t =
-	begin try Unix.shutdown t.socket Unix.SHUTDOWN_ALL with _ -> () end;
-	Unix.close t.socket
+	lwt () =
+		try_lwt
+			Lwt_unix.shutdown t.socket Unix.SHUTDOWN_ALL;
+			Lwt.return ()
+		with _ -> Lwt.return ()
+	in
+	Lwt_unix.close t.socket
 (*
 	t.alive <- false
 *)
 
 let connect addr =
-	let socket = Unix.socket Unix.PF_INET Unix.SOCK_STREAM 0 in
-	Unix.setsockopt socket Unix.TCP_NODELAY true;
-	Unix.connect socket (Unix.ADDR_INET (addr.T_server.inet_addr, addr.T_server.port));
+	let socket = Lwt_unix.socket Unix.PF_INET Unix.SOCK_STREAM 0 in
+	Lwt_unix.setsockopt socket Unix.TCP_NODELAY true;
+	lwt () = Lwt_unix.connect socket (Unix.ADDR_INET (addr.T_server.inet_addr, addr.T_server.port)) in
 (*
 	let in_channel = Unix.in_channel_of_descr socket in
 	let out_channel = Unix.out_channel_of_descr socket in
@@ -162,25 +170,25 @@ let connect addr =
 		alive = true;
 *)
 	} in
-	let server_version = read_bin_int t in
+	lwt server_version = read_bin_int t in
 	debug "Remote server sersion = %i, local version = %i" server_version Buildcounter.v;
 	if server_version = Buildcounter.v then
-		t
+		Lwt.return t
 	else
 	begin
-		send_value t Cmd.Bye;
-		disconnect t;
-		raise InvalidVersion
+		lwt () = send_value t Cmd.Bye in
+		lwt () = disconnect t in
+		Lwt.fail InvalidVersion
 	end
 
 let listen addr acceptor =
-	let l_socket = Unix.socket Unix.PF_INET Unix.SOCK_STREAM 0 in
-	Unix.setsockopt l_socket Unix.SO_REUSEADDR true;
-	Unix.setsockopt l_socket Unix.TCP_NODELAY true;
-	Unix.bind l_socket (Unix.ADDR_INET (addr.T_server.inet_addr, addr.T_server.port));
-	Unix.listen l_socket 100;
+	let l_socket = Lwt_unix.socket Unix.PF_INET Unix.SOCK_STREAM 0 in
+	Lwt_unix.setsockopt l_socket Unix.SO_REUSEADDR true;
+	Lwt_unix.setsockopt l_socket Unix.TCP_NODELAY true;
+	Lwt_unix.bind l_socket (Unix.ADDR_INET (addr.T_server.inet_addr, addr.T_server.port));
+	Lwt_unix.listen l_socket 100;
 	let rec loop () =
-		let (socket, _) = Unix.accept l_socket in
+		lwt (socket, _) = Lwt_unix.accept l_socket in
 (*
 		let in_channel = Unix.in_channel_of_descr socket in
 		let out_channel = Unix.out_channel_of_descr socket in
@@ -193,7 +201,7 @@ let listen addr acceptor =
 			alive = true;
 *)
 		} in
-		let (_ : Thread.t) = Thread.create acceptor c in
+		ignore (acceptor c);
 		loop ()
 	in
 	loop ()

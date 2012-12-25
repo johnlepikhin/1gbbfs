@@ -23,20 +23,20 @@ let get pool =
 		let conn = Stack.pop pool.free in
 		pool.in_use <- ConnSet.add conn pool.in_use;
 		Mutex.unlock pool.mutex;
-		conn
+		Lwt.return conn
 	with
 		| _ ->
 			let try_connect () =
-				try
-					let conn = Connection.connect pool.server_addr in
+				try_lwt
+					lwt conn = Connection.connect pool.server_addr in
 					pool.in_use <- ConnSet.add conn pool.in_use;
 					Mutex.unlock pool.mutex;
-					conn
+					Lwt.return conn
 				with
 					| e ->
 						Mutex.unlock pool.mutex;
 						pool.server_addr.T_server.state <- T_server.DeadFrom (Unix.gettimeofday ());
-						raise e
+						Lwt.fail e
 			in
 			let open T_server in
 			match pool.server_addr.state with
@@ -48,7 +48,7 @@ let get pool =
 					else
 					begin
 						Mutex.unlock pool.mutex;
-						raise NotAvailable
+						Lwt.fail NotAvailable
 					end
 
 let release pool conn =
@@ -65,11 +65,13 @@ let remove pool conn =
 	Mutex.lock pool.mutex;
 	try
 		pool.in_use <- ConnSet.remove conn pool.in_use;
-		Unix.close conn.T_connection.socket;
-		Mutex.unlock pool.mutex
+		lwt () = Lwt_unix.close conn.T_connection.socket in
+		Mutex.unlock pool.mutex;
+		Lwt.return ()
 	with
 		| _ ->
-			Mutex.unlock pool.mutex
+			Mutex.unlock pool.mutex;
+			Lwt.return ()
 
 let conn_cache = Hashtbl.create 1003
 
@@ -80,25 +82,25 @@ let wrap ~f addr =
 		let addr_string = Printf.sprintf "%s:%i" (Unix.string_of_inet_addr addr.T_server.inet_addr) addr.T_server.port in
 		let error s =
 			debug "Can't connect to server %s : %s" addr_string s;
-			raise NotAvailable
+			Lwt.fail NotAvailable
 		in
-		try
-			let conn = get pool in
-			try
+		try_lwt
+			lwt conn = get pool in
+			try_lwt
 				debug "Call to addr %s" addr_string;
-				let r = f conn in
+				lwt r = f conn in
 				release pool conn;
-				r
+				Lwt.return r
 			with
 				| Connection.Timeout
 				| End_of_file ->
 					debug "Connection to server dead";
-					remove pool conn;
-					raise Connection.Timeout
+					lwt () = remove pool conn in
+					Lwt.fail Connection.Timeout
 				| e ->
 					debug "Can't connect to server: %s" (Printexc.to_string e);
 					release pool conn;
-					raise e
+					Lwt.fail e
 		with
 			| Unix.Unix_error (ue, _, _) ->
 				error (Unix.error_message ue)
@@ -120,17 +122,17 @@ let wrap ~f addr =
 			Mutex.unlock conn_cache_mutex;
 			try_pool pool
 
-type 'a callback = backend : T_server.server -> reg_backend : Dbt.RegBackend.row -> row : 'a -> T_connection.t -> unit
+type 'a callback = backend : T_server.server -> reg_backend : Dbt.RegBackend.row -> row : 'a -> T_connection.t -> unit Lwt.t
 
 let do_for_all_p
-	?(on_error=(fun ~reg_backend ~row _ -> ()))
+	?(on_error=(fun ~reg_backend ~row _ -> Lwt.return ()))
 	~(getter : 'a -> Dbt.RegBackend.row)
 	~(f : 'a callback)
 	(rows : 'a list)
 =
 	let call row =
 		let reg_backend = getter row in
-		try
+		try_lwt
 			let backend = Backend.of_reg_backend reg_backend in
 			wrap ~f:(f ~backend ~reg_backend ~row) backend.T_server.addr
 (*
@@ -144,40 +146,40 @@ let do_for_all_p
 		with
 			| e ->
 				debug "Error for reg_backend row id=%Li: %s" reg_backend.Dbt.RegBackend_S.id (Printexc.to_string e);
-				try
+				try_lwt
 					on_error ~reg_backend ~row e
 				with
-					| _ -> ()
+					| _ -> Lwt.return ()
 	in
-	let tids = List.map (Thread.create call) rows in
-	List.iter Thread.join tids
+	let tids = List.map call rows in
+	Lwt.join tids
 
 let do_for_all_s
-	?(on_error=(fun ~reg_backend ~row _ -> true))
+	?(on_error=(fun ~reg_backend ~row _ -> Lwt.return true))
 	~(getter : 'a -> Dbt.RegBackend.row)
 	~f
 	(rows : 'a list)
 =
 	let call row =
 		let reg_backend = getter row in
-		try
+		try_lwt
 			let backend = Backend.of_reg_backend reg_backend in
 			wrap ~f:(f ~backend ~reg_backend ~row) backend.T_server.addr
 		with
 			| e ->
-				try
+				try_lwt
 					on_error ~reg_backend ~row e
 				with
-					| _ -> true
+					| _ -> Lwt.return true
 	in
 	let rec loop = function
 		| hd :: tl ->
-			let r = call hd in
+			lwt r = call hd in
 			if r then
 				loop tl
 			else
-				()
-		| [] -> ()
+				Lwt.return ()
+		| [] -> Lwt.return ()
 	in
 	loop rows
 

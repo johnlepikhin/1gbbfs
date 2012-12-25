@@ -151,7 +151,7 @@ let _wrap
 	~f_rollback
 	~pool ~fname f
 =
-	Gc.full_major ();
+(*	Gc.compact (); *)
 	debug "Call to %s" fname;
 	let r =
 		try
@@ -163,7 +163,7 @@ let _wrap
 				let r =
 					let rec loop () =
 						try
-							f dbd
+							Lwt_main.run (f dbd)
 						with
 							| Not_found ->
 								debug "TR ID %i Caught general Not_found exception" (Obj.magic dbd).T_db.tr_id;
@@ -213,7 +213,7 @@ let null_wrap pool fname f = _wrap
 	~pool ~fname f
 *)
 
-let ro_wrap (pool : Db_pool.t) fname (f : RO.t -> 'a result) = _wrap
+let ro_wrap (pool : Db_pool.t) fname (f : RO.t -> 'a result Lwt.t) = _wrap
 	~f_get:RO.get
 	~f_release:RO.release
 	~f_ping:RO.ping

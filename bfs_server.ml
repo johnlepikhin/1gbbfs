@@ -47,11 +47,6 @@ module FD = struct
 				Mutex.unlock mutex;
 				t.id
 
-	let attach t =
-		Mutex.lock mutex;
-		t.refs <- t.refs + 1;
-		Mutex.unlock mutex
-
 	let remove id =
 		Mutex.lock mutex;
 		try
@@ -89,6 +84,7 @@ end
 type info = {
 	connection : T_connection.t;
 	backend : T_server.server;
+	fds : (int64, unit) Hashtbl.t;
 }
 
 module Config = struct
@@ -100,16 +96,19 @@ let fatal s =
 	exit 1
 
 let c_fopen path flags c =
-	try
-		let id = FD.id_of_name path in
-		Connection.send_value c.connection (Response.Data id)
-	with
-		| Not_found ->
-			let fullpath = c.backend.T_server.storage ^ path in
-			let fd = Unix.openfile fullpath flags 0o644 in
-			let id = FD.add path fd in
-			debug "send fd ID=%Li" id;
-			Connection.send_value c.connection (Response.Data id)
+	let id =
+		try
+			FD.id_of_name path
+		with
+			| Not_found ->
+				let fullpath = c.backend.T_server.storage ^ path in
+				let fd = Unix.openfile fullpath flags 0o644 in
+				let id = FD.add path fd in
+				debug "send fd ID=%Li" id;
+				id
+	in
+	Hashtbl.replace c.fds id ();
+	Connection.send_value c.connection (Response.Data id)
 
 let c_read fd offset size c =
 	try
@@ -132,7 +131,7 @@ let c_read fd offset size c =
 			let tl = loop 0 size in
 			let rb = size - tl in
 			debug "send read size %i" rb;
-			Connection.send_value c.connection (Response.Data rb);
+			lwt () = Connection.send_value c.connection (Response.Data rb) in
 			Connection.send_string c.connection buf 0 rb
 		with
 			| End_of_file ->
@@ -152,7 +151,7 @@ let c_write fd offset size c =
 			loop fd buf (p+wb) (tl-wb)
 	in
 	try
-		let buf = Connection.read_string c.connection size in
+		lwt buf = Connection.read_string c.connection size in
 		let fd = FD.get_by_id fd in
 		loop fd buf 0 size;
 		Connection.send_value c.connection (Response.Data ());
@@ -200,13 +199,17 @@ let c_rmdir path c =
 	Unix.rmdir fullpath;
 	Connection.send_value c.connection (Response.Data ())
 
-let c_fclose fd c =
+let close_fd fd =
 	let fd = FD.remove fd in
-	(match fd with
+	match fd with
 		| None -> ()
 		| Some fd ->
 			Unix.close fd
-	);
+	
+
+let c_fclose fd c =
+	close_fd fd;
+	Hashtbl.remove c.fds fd;
 	Connection.send_value c.connection (Response.Data ())
 
 let c_rename oname nname c =
@@ -223,70 +226,67 @@ let resp_wrap conn f =
 			Connection.send_value conn.connection (Response.Error (Printexc.to_string e))
 
 let drop_connection c =
+	Hashtbl.iter (fun id _ -> close_fd id) c.fds;
 	Connection.disconnect c.connection
 
 let rec processor c =
-	try
-		Gc.full_major ();
-		debug "Waiting for a command";
-		let cmd = Connection.read_value ~timeout:864000. c.connection in
-		let continue = match cmd with
-			| Cmd.Bye ->
-				debug "Got Bye command";
-				false
-			| Cmd.FOpen (path, flags) ->
-				debug "Got FOpen '%s' command" path;
-				resp_wrap c (c_fopen path flags);
-				true
-			| Cmd.Read (fd, offset, size) ->
-				debug "Got Read (%Li, %Li, %i) command" fd offset size;
-				resp_wrap c (c_read fd offset size);
-				true
-			| Cmd.Write (fd, offset, size) ->
-				debug "Got Write (%Li, %Li, %i) command" fd offset size;
-				resp_wrap c (c_write fd offset size);
-				true
-			| Cmd.Unlink path ->
-				debug "Got Unlink (%s) command" path;
-				resp_wrap c (c_unlink path);
-				true
-			| Cmd.Truncate (fd, len) ->
-				debug "Got Truncate (%Li) command" len;
-				resp_wrap c (c_truncate fd len);
-				true
-			| Cmd.MkDir path ->
-				debug "Got MkDir (%s) command" path;
-				resp_wrap c (c_mkdir path);
-				true
-			| Cmd.RmDir path ->
-				debug "Got RmDir (%s) command" path;
-				resp_wrap c (c_rmdir path);
-				true
-			| Cmd.FClose fd ->
-				debug "Got FClose (%Li) command" fd;
-				resp_wrap c (c_fclose fd);
-				true
-			| Cmd.Rename (oname, nname) ->
-				debug "Got Rename ('%s', '%s') command" oname nname;
-				resp_wrap c (c_rename oname nname);
-				true
-		in
-		if continue then
-			processor c
-		else
+	debug "Waiting for a command";
+	debug "names=%i ids=%i" (Hashtbl.length FD.fd_names) (Hashtbl.length FD.fds);
+	lwt cmd = Connection.read_value ~timeout:864000. c.connection in
+	match cmd with
+		| Cmd.Bye ->
+			debug "Got Bye command";
 			drop_connection c
+		| Cmd.FOpen (path, flags) ->
+			debug "Got FOpen '%s' command" path;
+			lwt () = resp_wrap c (c_fopen path flags) in
+			processor c
+		| Cmd.Read (fd, offset, size) ->
+			debug "Got Read (%Li, %Li, %i) command" fd offset size;
+			lwt () = resp_wrap c (c_read fd offset size) in
+			processor c
+		| Cmd.Write (fd, offset, size) ->
+			debug "Got Write (%Li, %Li, %i) command" fd offset size;
+			lwt () = resp_wrap c (c_write fd offset size) in
+			processor c
+		| Cmd.Unlink path ->
+			debug "Got Unlink (%s) command" path;
+			lwt () = resp_wrap c (c_unlink path) in
+			processor c
+		| Cmd.Truncate (fd, len) ->
+			debug "Got Truncate (%Li) command" len;
+			lwt () = resp_wrap c (c_truncate fd len) in
+			processor c
+		| Cmd.MkDir path ->
+			debug "Got MkDir (%s) command" path;
+			lwt () = resp_wrap c (c_mkdir path) in
+			processor c
+		| Cmd.RmDir path ->
+			debug "Got RmDir (%s) command" path;
+			lwt () = resp_wrap c (c_rmdir path) in
+			processor c
+		| Cmd.FClose fd ->
+			debug "Got FClose (%Li) command" fd;
+			lwt () = resp_wrap c (c_fclose fd) in
+			processor c
+		| Cmd.Rename (oname, nname) ->
+			debug "Got Rename ('%s', '%s') command" oname nname;
+			lwt () = resp_wrap c (c_rename oname nname) in
+			processor c
+
+let acceptor backend connection =
+	lwt () = Connection.send_bin_int connection Buildcounter.v in
+	let c = {
+		connection;
+		backend;
+		fds = Hashtbl.create 103;
+	} in
+	try_lwt
+		processor c
 	with
 		| e ->
 			debug "Error while processing connection: %s" (Printexc.to_string e);
 			drop_connection c
-
-let acceptor backend connection =
-	Connection.send_bin_int connection Buildcounter.v;
-	let c = {
-		connection;
-		backend;
-	} in
-	processor c
 
 let db_wrap name pool f =
 	try
@@ -300,7 +300,7 @@ let get_config pool name =
 	db_wrap "get_config" pool (fun dbd ->
 		try
 			let row = Db.RO.select_one dbd ("select id, name, address, port, sum(prio_read), sum(prio_write), storage_dir from backend where name=" ^ (Mysql.ml2str name)) in
-			Db.Data (Backend.of_db row)
+			Lwt.return (Db.Data (Backend.of_db row))
 		with
 			| Not_found ->
 				fatal (Printf.sprintf "Node %s not found in DB\n" name)
@@ -340,4 +340,4 @@ let () =
 			| _ ->
 				fatal (Printf.sprintf "Storage directory '%s' doesn't exist" backend.T_server.storage)
 	end;
-	Connection.listen backend.T_server.addr (acceptor backend)
+	Lwt_main.run (Connection.listen backend.T_server.addr (acceptor backend))

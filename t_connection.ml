@@ -1,5 +1,5 @@
 type t = {
-	socket : Unix.file_descr;
+	socket : Lwt_unix.file_descr;
 (*
 	in_channel : in_channel;
 	out_channel : out_channel;
