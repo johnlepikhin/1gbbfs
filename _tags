@@ -1,0 +1,2 @@
+<*.ml> or <*.native> or <*.byte>: thread, package(fuse), package(mysql), package(pa_le), syntax(camlp4o), package(pcre), package(lwt.unix), package(lwt.syntax), package(lwt), package(lwt.unix)
+<*.native>: static, thread, use_lbigarray
