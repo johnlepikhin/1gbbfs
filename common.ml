@@ -5,8 +5,8 @@ let mysql_config =
 	let open Mysql in
 	ref {
 		defaults with
-		dbname = Some "dbfs";
-		dbuser = Some "dbfs";
+		dbname = Some "bfs";
+		dbuser = Some "bfs";
 		dbpwd = Some (Mysql_pwd.get_password ());
 	}
 
