@@ -589,7 +589,7 @@ let c_rename oname nname dbd =
 					let old_length = String.length old_with_slash in
 					lwt () = Db.RW.iter_all dbd
 						("select " ^ RegBackend.cols_string ^ " from " ^ RegBackend.name
-						^ " where path like '" ^ (Db.like_escape old_with_slash) ^ "%' and backend=" ^ (Mysql.ml642int reg_backend.RegBackend_S.backend))
+						^ " where path like '" ^ (Db.like_escape old_with_slash) ^ "%' and backend=" ^ (Mysql.ml642int reg_backend.RegBackend_S.backend) ^ " for update")
 						(fun row ->
 							let row = RegBackend_S.of_db row in
 							let tail = String.sub row.RegBackend_S.path old_length ((String.length row.RegBackend_S.path) - old_length) in
@@ -628,7 +628,7 @@ let c_rename oname nname dbd =
 	let new_with_slash = add_slash nname in
 	let old_length = String.length old_with_slash in
 	lwt () = Db.RW.iter_all dbd
-		("select " ^ Metadata.cols_string ^ " from " ^ Metadata.name ^ " where fullname like '" ^ (Db.like_escape old_with_slash) ^ "%'")
+		("select " ^ Metadata.cols_string ^ " from " ^ Metadata.name ^ " where fullname like '" ^ (Db.like_escape old_with_slash) ^ "%' for update")
 		(fun row ->
 			let row = of_db row in
 			let tail = String.sub row.fullname old_length ((String.length row.fullname) - old_length) in
