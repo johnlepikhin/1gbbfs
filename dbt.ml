@@ -283,6 +283,16 @@ module Metadata =
 				fullname = path;
 			}
 
+		let of_stat stat fullname =
+			let open Metadata_S in
+			let deepness = ref 0 in
+			String.iter (fun c -> if c = '/' then incr deepness) fullname;
+			{ default with
+				stat;
+				fullname;
+				deepness = !deepness;
+			}
+
 		let directory = create Unix.S_DIR
 
 		let regular = create Unix.S_REG

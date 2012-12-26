@@ -21,7 +21,7 @@ let dispatcher = function
 			]
 		);
 
-		rule "Make" ~prod:"make" ~deps:["bfs_client.native"; "bfs_server.native"] (fun _ _ -> Nop);
+		rule "Make" ~prod:"make" ~deps:["bfs_client.native"; "bfs_server.native"; "bfs_import.native"] (fun _ _ -> Nop);
 
 		rule "Original syntax" ~prod:"%.ppo" ~deps:["%.ml"]
 			begin
