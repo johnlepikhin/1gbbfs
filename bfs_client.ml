@@ -558,7 +558,6 @@ let c_truncate path len dbd =
 			Lwt.return eBADF
 
 
-
 let c_rename oname nname dbd =
 	let open Metadata_S in
 	let r = Metadata.rw_of_path dbd oname in
@@ -584,6 +583,21 @@ let c_rename oname nname dbd =
 							("path=" ^ (Mysql.ml2str backend_path_new) ^ " and backend=" ^ (Mysql.ml642int reg_backend.RegBackend_S.backend))
 					with _ -> ());
 					Dbt.RegBackend.update_by_key dbd { reg_backend with RegBackend_S.path = backend_path_new };
+					(* rename all childs on the backend *)
+					let old_with_slash = add_slash backend_path_old in
+					let new_with_slash = add_slash backend_path_new in
+					let old_length = String.length old_with_slash in
+					lwt () = Db.RW.iter_all dbd
+						("select " ^ RegBackend.cols_string ^ " from " ^ RegBackend.name
+						^ " where path like '" ^ (Db.like_escape old_with_slash) ^ "%' and backend=" ^ (Mysql.ml642int reg_backend.RegBackend_S.backend))
+						(fun row ->
+							let row = RegBackend_S.of_db row in
+							let tail = String.sub row.RegBackend_S.path old_length ((String.length row.RegBackend_S.path) - old_length) in
+							let path = new_with_slash ^ tail in
+							RegBackend.update_by_key ~lock:false dbd { row with RegBackend_S.path = path };
+							Lwt.return ()
+						)
+					in
 					incr success;
 					Lwt.return ()
 				| Response.UnixError Unix.EXDEV ->
@@ -608,6 +622,25 @@ let c_rename oname nname dbd =
 		let m = Metadata.rw_of_path dbd nname in
 		Metadata.update_where dbd { m with fullname = "" } nwhere
 	end;
+
+	(* rename all childs *)
+	let old_with_slash = add_slash oname in
+	let new_with_slash = add_slash nname in
+	let old_length = String.length old_with_slash in
+	lwt () = Db.RW.iter_all dbd
+		("select " ^ Metadata.cols_string ^ " from " ^ Metadata.name ^ " where fullname like '" ^ (Db.like_escape old_with_slash) ^ "%'")
+		(fun row ->
+			let row = of_db row in
+			let tail = String.sub row.fullname old_length ((String.length row.fullname) - old_length) in
+			let fullname = new_with_slash ^ tail in
+			let deepness = ref 0 in
+			String.iter (fun c -> if c = '/' then incr deepness) fullname;
+			Metadata.update_where ~lock:false dbd { row with fullname; deepness = !deepness } ("fullname=" ^ (Mysql.ml2str row.fullname));
+			Lwt.return ()
+		)
+	in
+
+	(* finalize *)
 	Metadata.update_where dbd { r with fullname = nname; deepness = parent_meta.deepness + 1 } ("id=" ^ (Mysql.ml642int r.id));
 	Lwt.return (Db.Data ())
 

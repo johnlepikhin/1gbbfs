@@ -13,35 +13,41 @@ module RO_RW_Common = struct
 		debug "TR ID %i MySQL query: %s" dbd.tr_id q;
 		Mysql.exec dbd.dbd q
 
-	let exec dbd q =
-		Mutex.lock dbd.mutex;
+	let exec ?(lock=true) dbd q =
+		if lock then
+			Mutex.lock dbd.mutex;
+		let unlock () = if lock then Mutex.unlock dbd.mutex else () in
 		try
 			let _ = query dbd q in
-			Mutex.unlock dbd.mutex;
+			unlock ();
 		with
 			| e ->
-				Mutex.unlock dbd.mutex;
+				unlock ();
 				raise e
 
-	let select_one dbd q =
-		Mutex.lock dbd.mutex;
+	let select_one ?(lock=true) dbd q =
+		if lock then
+			Mutex.lock dbd.mutex;
+		let unlock () = if lock then Mutex.unlock dbd.mutex else () in
 		try
 			let r = query dbd q in
 			match Mysql.fetch r with
 				| None ->
-					Mutex.unlock dbd.mutex;
+					unlock ();
 					raise Not_found
 				| Some row ->
-					Mutex.unlock dbd.mutex;
+					unlock ();
 					row
 		with
 			| e ->
-				Mutex.unlock dbd.mutex;
+				unlock ();
 				raise e
 	
 
-	let select_all dbd q =
-		Mutex.lock dbd.mutex;
+	let select_all ?(lock=true) dbd q =
+		if lock then
+			Mutex.lock dbd.mutex;
+		let unlock () = if lock then Mutex.unlock dbd.mutex else () in
 		try
 			let r = query dbd q in
 			let rec loop lst =
@@ -52,11 +58,38 @@ module RO_RW_Common = struct
 						loop (row :: lst)
 			in
 			let lst = loop [] in
-			Mutex.unlock dbd.mutex;
+			unlock ();
 			List.rev lst
 		with
 			| e ->
-				Mutex.unlock dbd.mutex;
+				unlock ();
+				raise e
+
+	let iter_all ?(lock=true) dbd q f =
+		if lock then
+			Mutex.lock dbd.mutex;
+		let unlock () = if lock then Mutex.unlock dbd.mutex else () in
+		try
+			let r = query dbd q in
+			let rec loop () =
+				match Mysql.fetch r with
+					| None ->
+						Lwt.return ()
+					| Some row ->
+						lwt () = f row in
+						loop ()
+			in
+			try_lwt
+				lwt () = loop () in
+				unlock ();
+				Lwt.return ()
+			with
+				| e ->
+					unlock ();
+					Lwt.fail e
+		with
+			| e ->
+				unlock ();
 				raise e
 
 	let get = Db_pool.get
@@ -75,16 +108,18 @@ module RO_RW_Common = struct
 
 	let to_dbd t = t
 
-	let insert t q =
-		Mutex.lock t.mutex;
+	let insert ?(lock=true) t q =
+		if lock then
+			Mutex.lock t.mutex;
+		let unlock () = if lock then Mutex.unlock t.mutex else () in
 		try
 			let _ = query t q in
 			let id = Mysql.insert_id t.dbd in
-			Mutex.unlock t.mutex;
+			unlock ();
 			id
 		with
 			| e ->
-				Mutex.unlock t.mutex;
+				unlock ();
 				raise e
 end
 
@@ -93,8 +128,9 @@ module RO : sig
 
 		val get: Db_pool.t -> t
 		val release: Db_pool.t -> t -> unit
-		val select_one: t -> string -> string option array
-		val select_all: t -> string -> string option array list
+		val select_one: ?lock : bool -> t -> string -> string option array
+		val select_all: ?lock : bool -> t -> string -> string option array list
+		val iter_all: ?lock : bool -> t -> string -> (string option array -> unit Lwt.t) -> unit Lwt.t
 		val ping: t -> unit
 		val to_dbd : t -> T_db.dbd
 		val of_dbd : T_db.dbd -> t
@@ -107,10 +143,11 @@ module RW : sig
 
 		val get: Db_pool.t -> t
 		val release: Db_pool.t -> t -> unit
-		val select_one: t -> string -> string option array
-		val select_all: t -> string -> string option array list
-		val exec: t -> string -> unit
-		val insert: t -> string -> int64
+		val select_one: ?lock : bool -> t -> string -> string option array
+		val select_all: ?lock : bool -> t -> string -> string option array list
+		val iter_all: ?lock : bool -> t -> string -> (string option array -> unit Lwt.t) -> unit Lwt.t
+		val exec: ?lock : bool -> t -> string -> unit
+		val insert: ?lock : bool -> t -> string -> int64
 		val ping: t -> unit
 		val to_dbd : t -> dbd
 		val of_dbd : dbd -> t

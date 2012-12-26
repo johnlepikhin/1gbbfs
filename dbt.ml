@@ -94,10 +94,10 @@ module F = functor (T : TABLE) ->
 		let remove_cache row =
 			Cache.remove cache (T.key_of_row row)
 
-		let ro_select_one ?(for_update=true) ?(key : key option) dbd where =
+		let ro_select_one ?lock ?(for_update=true) ?(key : key option) dbd where =
 			let get () =
 				let for_update = if for_update then " for update" else "" in
-				let r = Db.RO.select_one dbd ("select " ^ cols_string ^ " from " ^ T.name ^ " where " ^ where ^ for_update) in
+				let r = Db.RO.select_one ?lock dbd ("select " ^ cols_string ^ " from " ^ T.name ^ " where " ^ where ^ for_update) in
 				T.of_db r
 			in
 			let get_and_cache () =
@@ -113,43 +113,43 @@ module F = functor (T : TABLE) ->
 				)
 				| None -> get ()
 
-		let rw_select_one ?for_update ?key dbd where =
+		let rw_select_one ?lock ?for_update ?key dbd where =
 			let dbd = Db.RW.to_ro dbd in
-			ro_select_one ?for_update ?key dbd where
+			ro_select_one ?lock ?for_update ?key dbd where
 
-		let ro_select_all ?(for_update=true) dbd where =
+		let ro_select_all ?lock ?(for_update=true) dbd where =
 			let for_update = if for_update then " for update" else "" in
-			let r = Db.RO.select_all dbd ("select " ^ cols_string ^ " from " ^ T.name ^ " where " ^ where ^ for_update) in
+			let r = Db.RO.select_all ?lock dbd ("select " ^ cols_string ^ " from " ^ T.name ^ " where " ^ where ^ for_update) in
 			let rows = List.map T.of_db r in
 			let now = Unix.gettimeofday () in
 			List.iter (fun row -> Cache.add cache (T.key_of_row row) (row, now)) rows;
 			(rows : row list)
 
-		let rw_select_all ?for_update dbd where =
+		let rw_select_all ?lock ?for_update dbd where =
 			let dbd = Db.RW.to_ro dbd in
-			ro_select_all ?for_update dbd where
+			ro_select_all ?lock ?for_update dbd where
 
 		let string_of_row row =
 			let vals = T.to_db row in
 			String.concat ", " (List.map (fun (k,v) -> k ^ "=" ^ v) vals)
 
-		let insert dbd row =
-			Db.RW.insert dbd ("insert into " ^ T.name ^ " set " ^ (string_of_row row))
+		let insert ?lock dbd row =
+			Db.RW.insert ?lock dbd ("insert into " ^ T.name ^ " set " ^ (string_of_row row))
 
-		let update_where dbd row where =
-			Db.RW.exec dbd ("update " ^ T.name ^ " set " ^ (string_of_row row) ^ " where " ^ where);
+		let update_where ?lock dbd row where =
+			Db.RW.exec ?lock dbd ("update " ^ T.name ^ " set " ^ (string_of_row row) ^ " where " ^ where);
 			add_cache row
 
-		let update_by_key dbd row =
-			Db.RW.exec dbd ("update " ^ T.name ^ " set " ^ (string_of_row row) ^ " where " ^ T.key_name ^ "=" ^ (T.escaped_key_of_row row));
+		let update_by_key ?lock dbd row =
+			Db.RW.exec ?lock dbd ("update " ^ T.name ^ " set " ^ (string_of_row row) ^ " where " ^ T.key_name ^ "=" ^ (T.escaped_key_of_row row));
 			add_cache row
 
-		let delete dbd row =
-			Db.RW.exec dbd ("delete from " ^ T.name ^ " where " ^ T.key_name ^ "=" ^ (T.escaped_key_of_row row));
+		let delete ?lock dbd row =
+			Db.RW.exec ?lock dbd ("delete from " ^ T.name ^ " where " ^ T.key_name ^ "=" ^ (T.escaped_key_of_row row));
 			remove_cache row
 
-		let delete_where dbd where =
-			Db.RW.exec dbd ("delete from " ^ T.name ^ " where " ^ where)
+		let delete_where ?lock dbd where =
+			Db.RW.exec ?lock dbd ("delete from " ^ T.name ^ " where " ^ where)
 			(* TODO? remove_cache row *)
 
 		let clean_cache () =
