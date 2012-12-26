@@ -1,2 +1,3 @@
-<*.ml> or <*.native> or <*.byte>: thread, package(fuse), package(mysql), package(pa_le), syntax(camlp4o), package(pcre), package(lwt.unix), package(lwt.syntax), package(lwt), package(lwt.unix)
-<*.native>: thread, use_lbigarray
+<*.ml>: thread, package(fuse), package(mysql), package(pa_le), syntax(camlp4o), package(pcre), package(lwt.unix), package(lwt.syntax), package(lwt), package(lwt.unix)
+<*.native>: thread, use_lbigarray, package(lwt.unix), package(mysql), package(pcre)
+"bfs_client.native": package(fuse)
