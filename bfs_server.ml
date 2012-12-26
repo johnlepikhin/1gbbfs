@@ -307,7 +307,7 @@ let get_config pool name =
 	)
 
 let show_nodes () =
-	let pool = Db_pool.create Common.config in
+	let pool = Db_pool.create !Common.mysql_config in
 	db_wrap "show_nodes" pool (fun dbd ->
 		let rows = Db.RO.select_all dbd "select id, name, address, port, prio_read, prio_write, storage_dir from backend" in
 		let rows = List.map Backend.of_db rows in
@@ -318,7 +318,11 @@ let show_nodes () =
 
 let args = [
 	"--name", Arg.Set_string Config.name, "Backend name (as in 'backend' table)";
-	"--show-all", Arg.Unit show_nodes, "Show all nodes"
+	"--show-all", Arg.Unit show_nodes, "Show all nodes";
+	"--mysql-host", Arg.String (fun v -> Common.mysql_config := { !Common.mysql_config with Mysql.dbhost = Some v}), "Set MySQL host";
+	"--mysql-port", Arg.Int (fun v -> Common.mysql_config := { !Common.mysql_config with Mysql.dbport = Some v}), "Set MySQL port";
+	"--mysql-user", Arg.String (fun v -> Common.mysql_config := { !Common.mysql_config with Mysql.dbuser = Some v}), "Set MySQL user name";
+	"--mysql-db", Arg.String (fun v -> Common.mysql_config := { !Common.mysql_config with Mysql.dbname = Some v}), "Set MySQL database name";
 ]
 
 let args_usage = "Usage:\n\nbfs_server --name NODE_NAME\n"
@@ -329,7 +333,7 @@ let () =
 		Printf.eprintf "%s" (Arg.usage_string args args_usage);
 		exit 1
 	);
-	let pool = Db_pool.create Common.config in
+	let pool = Db_pool.create !Common.mysql_config in
 	let backend = get_config pool !Config.name in
 	debug "Got info from DB";
 	begin
@@ -340,4 +344,5 @@ let () =
 			| _ ->
 				fatal (Printf.sprintf "Storage directory '%s' doesn't exist" backend.T_server.storage)
 	end;
+	Lwt_daemon.daemonize ();
 	Lwt_main.run (Connection.listen backend.T_server.addr (acceptor backend))

@@ -1,15 +1,13 @@
 
 module M1 = Le_log
 
-exception TryAgain
-
-let config =
+let mysql_config =
 	let open Mysql in
-	{
+	ref {
 		defaults with
 		dbname = Some "dbfs";
 		dbuser = Some "dbfs";
-		dbpwd = Some "q1w2e3";
+		dbpwd = Some (Mysql_pwd.get_password ());
 	}
 
 let flush_fh_secs = 5.
@@ -17,18 +15,6 @@ let flush_fh_secs = 5.
 let backends_update_period = 100
 
 let dead_server_timeout = 5.
-
-(*
-let server1 =
-	let open T_server in
-	{
-		addr = {
-			inet_addr = Unix.inet_addr_loopback;
-			port = 54321;
-		};
-		storage = "/tmp/storage/";
-	}
-*)
 
 let eINVAL = Db.Failure Unix.EINVAL
 let eNOSYS = Db.Failure Unix.ENOSYS

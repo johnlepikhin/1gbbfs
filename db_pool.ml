@@ -5,6 +5,8 @@ type t = {
 	mutex : Mutex.t;
 }
 
+exception ConnectError of string
+
 let create auth_info =
 	{
 		auth_info;
@@ -33,6 +35,9 @@ let create_and_return pool =
 		Mutex.unlock pool.mutex;
 		dbd
 	with
+		| Mysql.Error s ->
+			Mutex.unlock pool.mutex;
+			raise (ConnectError s)
 		| e ->
 			Mutex.unlock pool.mutex;
 			raise e

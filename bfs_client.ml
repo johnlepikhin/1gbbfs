@@ -656,7 +656,7 @@ let rec gc_periodically () =
 
 
 let show_clients () =
-	let pool = Db_pool.create Common.config in
+	let pool = Db_pool.create !Common.mysql_config in
 	Db.ro_wrap pool "show_clients" (fun dbd ->
 		let rows = Client.ro_select_all dbd "1" in
 		List.iter (fun c -> Printf.printf "name=%s\n" c.Client_S.name) rows;
@@ -666,6 +666,10 @@ let show_clients () =
 let args = [
 	"--name", Arg.Set_string Config.name, "Client name (as in 'client' table)";
 	"--show-all", Arg.Unit show_clients, "Show all clients";
+	"--mysql-host", Arg.String (fun v -> Common.mysql_config := { !Common.mysql_config with Mysql.dbhost = Some v}), "Set MySQL host";
+	"--mysql-port", Arg.Int (fun v -> Common.mysql_config := { !Common.mysql_config with Mysql.dbport = Some v}), "Set MySQL port";
+	"--mysql-user", Arg.String (fun v -> Common.mysql_config := { !Common.mysql_config with Mysql.dbuser = Some v}), "Set MySQL user name";
+	"--mysql-db", Arg.String (fun v -> Common.mysql_config := { !Common.mysql_config with Mysql.dbname = Some v}), "Set MySQL database name";
 	"--", Arg.Rest (fun arg -> Config.fuse_args := arg :: !Config.fuse_args), "FUSE arguments"
 ]
 
@@ -682,7 +686,7 @@ let () =
 
 	Random.self_init ();
 	let open Fuse in
-	let pool = Db_pool.create config in
+	let pool = Db_pool.create !Common.mysql_config in
 (*
 	let null_wrap name f = Db.null_wrap pool name f in
 *)

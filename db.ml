@@ -186,6 +186,7 @@ let _wrap
 	~f_start
 	~f_commit
 	~f_rollback
+	~f_dbd
 	~pool ~fname f
 =
 (*	Gc.compact (); *)
@@ -226,6 +227,9 @@ let _wrap
 					f_release pool dbd;
 					raise e
 		with
+			| Db_pool.ConnectError s ->
+				Printf.eprintf "%s\n" s;
+				exit 1
 			| e ->
 				debug "Caught fatal wrapper exception: %s" (Printexc.to_string e);
 				exit 1
@@ -257,6 +261,7 @@ let ro_wrap (pool : Db_pool.t) fname (f : RO.t -> 'a result Lwt.t) = _wrap
 	~f_start:(fun _ -> ())
 	~f_commit:(fun _ -> ())
 	~f_rollback:(fun _ -> ())
+	~f_dbd:RO.to_dbd
 	~pool ~fname f
 
 let rw_wrap pool fname f = _wrap
@@ -266,5 +271,6 @@ let rw_wrap pool fname f = _wrap
 	~f_start:(fun dbd -> RW.exec dbd "start transaction")
 	~f_commit:(fun dbd -> RW.exec dbd "commit")
 	~f_rollback:(fun dbd -> RW.exec dbd "rollback")
+	~f_dbd:RW.to_dbd
 	~pool ~fname f
 
