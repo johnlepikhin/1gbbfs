@@ -9,9 +9,7 @@ let dispatcher = function
 	| After_rules ->
 
 		dep  ["link"; "ocaml"; "use_lbigarray"] ["l_bigarray_stubs.o"];
-(*
-		flag ["ocaml"; "link"; "static"] ["-ccopt"; "-static"];
-*)
+
 		rule "Clear build info" ~prod:"buildinfo.clear" ~deps:[] (fun env _build ->
 			Cmd (S[A"rm"; A"buildtime.ml"; A"buildcounter.ml"]);
 		);
