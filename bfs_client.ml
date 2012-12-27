@@ -264,6 +264,7 @@ let c_read path buffer offset size dbd =
 			Lwt.return true (* continue *)
 		in
 		let backends = Fd_client.get_valid_backends fd in
+		let backends = List.sort (fun a b -> compare b.Fd_client.server.T_server.db_prio_read a.Fd_client.server.T_server.db_prio_read) backends in
 		lwt () = Connection_pool.do_for_all_s ~on_error ~getter:(fun b -> b.Fd_client.regbackend) ~f backends in
 		match !read_bytes with
 			| Some rb ->

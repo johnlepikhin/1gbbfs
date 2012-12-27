@@ -78,31 +78,20 @@ let soft_open_file path =
 
 (* need to unlock t.mutex after file is really opened! *)
 let open_file metadata =
-	debug "open_file 1";
 	try
-	debug "open_file 2";
 		Mutex.lock global_lock;
-	debug "open_file 3";
 		let t = get metadata.Dbt.Metadata_S.fullname in
-	debug "open_file 4";
 		Mutex.lock t.mutex;
-	debug "open_file 5";
 		if t.is_closed then (
-	debug "open_file 6";
 			Mutex.unlock t.mutex;
-	debug "open_file 7";
 			raise Not_found
 		) else (
-	debug "open_file 8";
 			t.open_counter <- t.open_counter + 1;
-	debug "open_file 9";
 			Mutex.unlock global_lock;
-	debug "open_file 11";
 			t
 		)
 	with
 		| _ ->
-	debug "open_file 12";
 			let t = {
 				metadata;
 				backends = [];
@@ -110,13 +99,9 @@ let open_file metadata =
 				mutex = Mutex.create ();
 				is_closed = false;
 			} in
-	debug "open_file 13";
 			Hashtbl.add tbl metadata.Dbt.Metadata_S.fullname t;
-	debug "open_file 14";
 			Mutex.lock t.mutex;
-	debug "open_file 15";
 			Mutex.unlock global_lock;
-	debug "open_file 16";
 			t
 
 let close_file path =
