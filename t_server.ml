@@ -17,4 +17,10 @@ type server = {
 	db_prio_write : int;
 	mutable local_prio : int;
 	storage : string;
+	free_blocks : int64;
+	free_files : int64;
+	free_blocks_soft_limit: int64;
+	free_blocks_hard_limit: int64;
+	free_files_soft_limit: int64;
+	free_files_hard_limit: int64;
 }

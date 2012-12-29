@@ -30,6 +30,12 @@ CREATE TABLE `backend` (
   `storage_dir` varchar(255) NOT NULL,
   `prio_read` int(11) NOT NULL,
   `prio_write` int(11) NOT NULL,
+  `blocks_free` int(11) NOT NULL,
+  `files_free` int(11) NOT NULL,
+  `blocks_soft_limit` int(11) NOT NULL,
+  `blocks_hard_limit` int(11) NOT NULL,
+  `files_soft_limit` int(11) NOT NULL,
+  `files_hard_limit` int(11) NOT NULL,
   PRIMARY KEY (`id`),
   UNIQUE KEY `name` (`name`(30)),
   UNIQUE KEY `address_port` (`address`(20),`port`)
@@ -151,7 +157,7 @@ CREATE TABLE `metadata` (
   PRIMARY KEY (`id`),
   KEY `fullname` (`fullname`) USING HASH,
   KEY `childs` (`deepness`,`fullname`)
-) ENGINE=InnoDB AUTO_INCREMENT=232480 DEFAULT CHARSET=utf8;
+) ENGINE=InnoDB AUTO_INCREMENT=232623 DEFAULT CHARSET=utf8;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -176,7 +182,7 @@ CREATE TABLE `reg_backend` (
   KEY `fk_reg_backend_backend` (`backend`),
   CONSTRAINT `fk_reg_backend_metadata` FOREIGN KEY (`metadata`) REFERENCES `metadata` (`id`) ON UPDATE NO ACTION,
   CONSTRAINT `fk_reg_backend_backend` FOREIGN KEY (`backend`) REFERENCES `backend` (`id`) ON DELETE NO ACTION ON UPDATE NO ACTION
-) ENGINE=InnoDB AUTO_INCREMENT=457935 DEFAULT CHARSET=utf8;
+) ENGINE=InnoDB AUTO_INCREMENT=458077 DEFAULT CHARSET=utf8;
 /*!40101 SET character_set_client = @saved_cs_client */;
 /*!40103 SET TIME_ZONE=@OLD_TIME_ZONE */;
 
@@ -188,4 +194,4 @@ CREATE TABLE `reg_backend` (
 /*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;
 /*!40111 SET SQL_NOTES=@OLD_SQL_NOTES */;
 
--- Dump completed on 2012-12-26 16:32:55
+-- Dump completed on 2012-12-30  1:02:39

@@ -1,3 +1,9 @@
-<*.ml>: thread, package(fuse), package(mysql), package(pa_le), syntax(camlp4o), package(pcre), package(lwt.unix), package(lwt.syntax), package(lwt), package(lwt.unix)
+
+<*.ml>: thread, package(mysql), package(pa_le), syntax(camlp4o), package(pcre), package(lwt.unix), package(lwt.syntax), package(lwt), package(lwt.unix)
+"bfs_client.ml": package(fuse)
+"bfs_server.ml": package(ostatfs)
+
+
 <*.native>: thread, use_lbigarray, package(lwt.unix), package(mysql), package(pcre)
 "bfs_client.native": package(fuse)
+"bfs_server.native": package(ostatfs)

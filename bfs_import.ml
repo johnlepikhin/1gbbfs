@@ -26,21 +26,17 @@ let insert is_dir dbd backend path plen stat =
 			()
 
 let rec loop dbd backend path plen =
-	debug :1 "loop %s" path;
 	let open Unix.LargeFile in
 	let s = stat path in
 	match s.st_kind with
 		| Unix.S_REG ->
-			debug :1 "S_REG %s" path;
 			insert false dbd backend path plen s
 		| Unix.S_DIR ->
-			debug :1 "S_DIR %s" path;
 			insert true dbd backend path plen s;
 			let dh = Unix.opendir path in
 			(try
 				while true do
 					let entry = Unix.readdir dh in
-					debug :1 "entry %s" entry;
 					if entry <> "." && entry <> ".." then
 						loop dbd backend ((add_slash path) ^ entry) plen
 				done
@@ -71,7 +67,7 @@ let db_wrap name pool f =
 let get_config pool name =
 	db_wrap "get_config" pool (fun dbd ->
 		try
-			let row = Db.RW.select_one dbd ("select id, name, address, port, sum(prio_read), sum(prio_write), storage_dir from backend where name=" ^ (Mysql.ml2str name)) in
+			let row = Db.RW.select_one dbd ("select id, name, address, port, sum(prio_read), sum(prio_write), storage_dir, free_blocks, free_files, blocks_soft_limit, blocks_hard_limit, files_soft_limit, files_hard_limit  from backend where name=" ^ (Mysql.ml2str name)) in
 			Lwt.return (Db.Data (Backend.of_db row))
 		with
 			| Not_found ->
@@ -81,7 +77,7 @@ let get_config pool name =
 let show_nodes () =
 	let pool = Db_pool.create !Common.mysql_config in
 	db_wrap "show_nodes" pool (fun dbd ->
-		let rows = Db.RW.select_all dbd "select id, name, address, port, prio_read, prio_write, storage_dir from backend" in
+		let rows = Db.RW.select_all dbd "select id, name, address, port, prio_read, prio_write, storage_dir, free_blocks, free_files, blocks_soft_limit, blocks_hard_limit, files_soft_limit, files_hard_limit  from backend" in
 		let rows = List.map Backend.of_db rows in
 		let open T_server in
 		List.iter (fun b -> Printf.printf "name=%s, storage=%s, addr=%s, port=%i\n" b.name b.storage (Unix.string_of_inet_addr b.addr.inet_addr) b.addr.port) rows;

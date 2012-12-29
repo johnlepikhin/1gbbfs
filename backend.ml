@@ -15,25 +15,31 @@ let of_db r =
 		db_prio_write = Db.to_int r.(5);
 		local_prio = 0;
 		storage = Db.to_string r.(6);
+		free_blocks = Db.to_int64 r.(7);
+		free_files = Db.to_int64 r.(8);
+		free_blocks_soft_limit = Db.to_int64 r.(9);
+		free_blocks_hard_limit = Db.to_int64 r.(10);
+		free_files_soft_limit = Db.to_int64 r.(11);
+		free_files_hard_limit = Db.to_int64 r.(12);
 	}
 
 let get_backends dbd id =
-	let q = Printf.sprintf "select id, name, address, port, sum(prio_read), sum(prio_write), storage_dir
+	let q = Printf.sprintf "select id, name, address, port, sum(prio_read), sum(prio_write), storage_dir, free_blocks, free_files, blocks_soft_limit, blocks_hard_limit, files_soft_limit, files_hard_limit
 		from (
-			select b.id, b.name, b.address, b.port, cb.prio_read, cb.prio_write, b.storage_dir
+			select b.id, b.name, b.address, b.port, cb.prio_read, cb.prio_write, b.storage_dir, b.free_blocks, b.free_files, b.blocks_soft_limit, b.blocks_hard_limit, b.files_soft_limit, b.files_hard_limit
 				from backend b
 				left join client_backend cb on b.id=cb.backend
 				where cb.client=%Li
-			union select id, name, address, port, prio_read, prio_write, storage_dir
+			union select id, name, address, port, prio_read, prio_write, storage_dir, free_blocks, free_files, blocks_soft_limit, blocks_hard_limit, files_soft_limit, files_hard_limit
 				from backend
-			union select b.id, b.name, b.address, b.port, sum(cbg.prio_read), sum(cbg.prio_write), b.storage_dir
+			union select b.id, b.name, b.address, b.port, sum(cbg.prio_read), sum(cbg.prio_write), b.storage_dir, b.free_blocks, b.free_files, b.blocks_soft_limit, b.blocks_hard_limit, b.files_soft_limit, b.files_hard_limit
 				from backend b
 				left join backend_bgroup bbg on bbg.backend=b.id
 				left join bgroup bg on bg.id=bbg.bgroup
 				left join client_bgroup cbg on cbg.bgroup=bg.id
 				where cbg.client=%Li
 				group by b.id
-			union select b.id, b.name, b.address, b.port, sum(bg.prio_read), sum(bg.prio_write), b.storage_dir
+			union select b.id, b.name, b.address, b.port, sum(bg.prio_read), sum(bg.prio_write), b.storage_dir, b.free_blocks, b.free_files, b.blocks_soft_limit, b.blocks_hard_limit, b.files_soft_limit, b.files_hard_limit
 				from backend b
 				left join backend_bgroup bbg on bbg.backend=b.id
 				left join bgroup bg on bg.id=bbg.bgroup
