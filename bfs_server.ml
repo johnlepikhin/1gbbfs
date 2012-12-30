@@ -294,15 +294,20 @@ let acceptor backend connection =
 
 let db_wrap name pool f =
 	try
-		Db.ro_wrap pool name f
+		Db.rw_wrap pool name f
 	with
 		| Unix.Unix_error (msg, f, _) ->
-			fatal (Printf.sprintf "Can't get info from DB: %s\n" (Unix.error_message msg))
+			fatal (Printf.sprintf "Can't exec query: %s\n" (Unix.error_message msg))
 
 
 let periodic_statfs pool backend =
 	let rec loop () =
 		let st = Ostatfs.statfs backend.T_server.storage in
+		db_wrap "statfs" pool (fun dbd ->
+			Db.RW.exec dbd ("update backend set free_blocks=" ^ (Mysql.ml642int st.Ostatfs.bfree) ^ ", free_files=" ^ (Mysql.ml642int st.Ostatfs.ffree)
+				^ " where id=" ^ (Mysql.ml642int backend.T_server.id));
+			Lwt.return (Db.Data ())
+		);
 		Unix.sleep 10;
 		loop ()
 	in
@@ -316,7 +321,7 @@ let daemon pool backend =
 let get_config pool name =
 	db_wrap "get_config" pool (fun dbd ->
 		try
-			let row = Db.RO.select_one dbd ("select id, name, address, port, sum(prio_read), sum(prio_write), storage_dir, free_blocks, free_files, blocks_soft_limit, blocks_hard_limit, files_soft_limit, files_hard_limit from backend where name=" ^ (Mysql.ml2str name)) in
+			let row = Db.RW.select_one dbd ("select id, name, address, port, sum(prio_read), sum(prio_write), storage_dir, free_blocks, free_files, blocks_soft_limit, blocks_hard_limit, files_soft_limit, files_hard_limit from backend where name=" ^ (Mysql.ml2str name)) in
 			Lwt.return (Db.Data (Backend.of_db row))
 		with
 			| Not_found ->
@@ -326,7 +331,7 @@ let get_config pool name =
 let show_nodes () =
 	let pool = Db_pool.create !Common.mysql_config in
 	db_wrap "show_nodes" pool (fun dbd ->
-		let rows = Db.RO.select_all dbd "select id, name, address, port, prio_read, prio_write, storage_dir, free_blocks, free_files, blocks_soft_limit, blocks_hard_limit, files_soft_limit, files_hard_limit  from backend" in
+		let rows = Db.RW.select_all dbd "select id, name, address, port, prio_read, prio_write, storage_dir, free_blocks, free_files, blocks_soft_limit, blocks_hard_limit, files_soft_limit, files_hard_limit  from backend" in
 		let rows = List.map Backend.of_db rows in
 		let open T_server in
 		List.iter (fun b -> Printf.printf "name=%s, storage=%s, addr=%s, port=%i\n" b.name b.storage (Unix.string_of_inet_addr b.addr.inet_addr) b.addr.port) rows;

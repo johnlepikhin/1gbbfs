@@ -30,8 +30,8 @@ CREATE TABLE `backend` (
   `storage_dir` varchar(255) NOT NULL,
   `prio_read` int(11) NOT NULL,
   `prio_write` int(11) NOT NULL,
-  `blocks_free` int(11) NOT NULL,
-  `files_free` int(11) NOT NULL,
+  `free_blocks` int(11) NOT NULL,
+  `free_files` int(11) NOT NULL,
   `blocks_soft_limit` int(11) NOT NULL,
   `blocks_hard_limit` int(11) NOT NULL,
   `files_soft_limit` int(11) NOT NULL,
@@ -194,4 +194,4 @@ CREATE TABLE `reg_backend` (
 /*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;
 /*!40111 SET SQL_NOTES=@OLD_SQL_NOTES */;
 
--- Dump completed on 2012-12-30  1:02:39
+-- Dump completed on 2012-12-30 13:29:39
