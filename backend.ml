@@ -60,7 +60,14 @@ let sort_read lst =
 
 let sort_create lst =
 	let open T_server in
-	List.sort (fun a b -> compare (b.db_prio_write + b.local_prio) (a.db_prio_write + b.local_prio)) lst
+	let q v =
+		(if v.free_blocks < v.free_blocks_soft_limit then Common.bfree_soft_limit_score else 0)
+		+ (if v.free_blocks < v.free_blocks_hard_limit then Common.bfree_hard_limit_score else 0)
+		+ (if v.free_files < v.free_files_soft_limit then Common.ffree_soft_limit_score else 0)
+		+ (if v.free_files < v.free_files_hard_limit then Common.ffree_hard_limit_score else 0)
+		+ v.db_prio_write + v.local_prio
+	in
+	List.sort (fun a b -> compare (q b) (q a)) lst
 
 let update_backends dbd id =
 	let nlst = get_backends dbd id in

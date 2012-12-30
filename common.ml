@@ -16,6 +16,11 @@ let backends_update_period = 100
 
 let dead_server_timeout = 5.
 
+let bfree_soft_limit_score = -10
+let bfree_hard_limit_score = -10000
+let ffree_soft_limit_score = -10
+let ffree_hard_limit_score = -10000
+
 let eINVAL = Db.Failure Unix.EINVAL
 let eNOSYS = Db.Failure Unix.ENOSYS
 let eNOENT = Db.Failure Unix.ENOENT
