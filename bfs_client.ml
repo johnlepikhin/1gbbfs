@@ -22,32 +22,6 @@ let in_single (f : unit -> 'a) : 'a =
 				Mutex.unlock global_lock;
 				raise e
 
-let add_slash p =
-	if p.[(String.length p) - 1] = '/' then p else p ^ "/"
-
-
-let protect_open_file dbd meta f =
-	let rec loop meta attempt =
-		if meta.Metadata_S.fh_counter > 0 then
-		begin
-			if attempt > 10 then
-			begin
-				debug "File marked as open for %i secs, fail" attempt;
-				Lwt.return ePERM
-			end
-			else
-			begin
-				debug "File %s marked as open, wait..." meta.Metadata_S.fullname;
-				lwt () = Lwt_unix.sleep 1. in
-				let newmeta = Metadata.rw_of_path ~use_cache:false dbd meta.Metadata_S.fullname in
-				loop newmeta (attempt + 1)
-			end
-		end
-		else
-			f meta
-			
-	in
-	loop meta 1
 
 let c_getattr path dbd =
 	let r = Metadata.ro_of_path ~for_update:true ~use_cache:true dbd path in
@@ -58,7 +32,7 @@ let c_readdir path dbd =
 	let r = Metadata.ro_of_path ~for_update:true ~use_cache:true dbd path in
 	match r.stat.Unix.LargeFile.st_kind with
 		| Unix.S_DIR ->
-			let fn = add_slash path in
+			let fn = Op_common.add_slash path in
 			let rows = Metadata.ro_select_all dbd ("fullname like '" ^ (Db.like_escape fn) ^ "%' and deepness=" ^ (Mysql.ml2int (r.deepness + 1)) ^ " order by fullname") in
 			let dlen = String.length fn in
 			let names = List.map (fun row -> String.sub row.fullname dlen ((String.length row.fullname) - dlen)) rows in
@@ -172,309 +146,9 @@ let c_unlink path dbd =
 	)
 *)
 
-let c_fopen path flags dbd =
-	if Fd_client.soft_open_file path then
-		Lwt.return (Db.Data None)
-	else (
-		let flags = List.filter ((<>) Unix.O_WRONLY) flags in
-		let flags = List.filter ((<>) Unix.O_RDONLY) flags in
-		let flags = List.filter ((<>) Unix.O_RDWR) flags in
-		let flags = Unix.O_RDWR :: flags in
-		let open Metadata_S in
-		let r = Metadata.rw_of_path dbd path in
-		match r.stat.Unix.LargeFile.st_kind with
-			| Unix.S_DIR ->
-				Lwt.return eISDIR
-			| Unix.S_REG -> (
-				let fd = Fd_client.open_file { r with fh_counter = r.fh_counter + 1 } in
-				if fd.Fd_client.backends = [] then (
-					(* is new, need to open connections *)
-					(* is file opened on another server? *)
-					protect_open_file dbd r (fun r ->
-	(*
-						let r = { r with fh_counter = r.fh_counter + 1 } in
-						let fd = Fd_client.open_file r in
-	*)
-						let r = { r with fh_counter = r.fh_counter + 1 } in
-						let f ~backend ~reg_backend ~row conn =
-							let open T_communication in
-							lwt r = Connection.request conn (Cmd.FOpen (reg_backend.RegBackend_S.path, flags)) in
-							match r with
-								| Response.Data server_fd ->
-									debug "File %s opened, received remote FD=%Li" path server_fd;
-									Fd_client.add_backend fd reg_backend backend (Some server_fd);
-									debug "added OK";
-									Lwt.return ()
-								| Response.UnixError Unix.ENOENT ->
-									debug "Remote server Unix error: %s" (Unix.error_message Unix.ENOENT);
-									Lwt.return ()
-								| Response.UnixError e ->
-									debug "Remote server Unix error: %s" (Unix.error_message e);
-									Lwt.return ()
-								| Response.Error e ->
-									debug "Remote server error: %s" e;
-									Lwt.return ()
-						in
-						let backends = RegBackend.rw_all_of_metadata dbd r in
-						lwt () = Connection_pool.do_for_all_p ~getter:(fun b -> b) ~f backends in
-						match fd.Fd_client.backends with
-							| [] ->
-								Fd_client.unsafe_remove fd.Fd_client.metadata.Metadata_S.fullname;
-								Mutex.unlock fd.Fd_client.mutex;
-								Lwt.return eAGAIN
-							| _ ->
-								Metadata.update_by_key dbd r;
-								Mutex.unlock fd.Fd_client.mutex;
-								Lwt.return (Db.Data None)
-					)
-				) else (
-					(* file is already opened here, just unlock fd.mutex *)
-					Mutex.unlock fd.Fd_client.mutex;
-					Lwt.return (Db.Data None)
-				)
-			)
-			| _ ->
-				Lwt.return eINVAL
-	)
-
-let c_read path buffer offset size dbd =
-	let size = Bigarray.Array1.dim buffer in
-	try
-		let open T_communication in
-		let read_bytes = ref None in
-		let fd = Fd_client.get path in
-		let f ~backend ~reg_backend ~row conn =
-			match row.Fd_client.remote_fd with
-				| Some remote_fd -> (
-					lwt r = Connection.request conn (Cmd.Read (remote_fd, offset, size)) in
-					match r with
-						| Response.Data len ->
-							lwt () = Connection.read_to_bigarray conn buffer 0 len in
-							read_bytes := Some len;
-							Lwt.return false (* OK, do not continue *)
-						| Response.UnixError e ->
-							Lwt.return true
-						| Response.Error e ->
-							Lwt.return true
-				)
-				| None ->
-					Lwt.return true (* no FD, try next server *)
-		in
-		let on_error ~reg_backend ~row exn =
-			Lwt.return true (* continue *)
-		in
-		let backends = Fd_client.get_valid_backends fd in
-		let backends = List.sort (fun a b -> compare b.Fd_client.server.T_server.db_prio_read a.Fd_client.server.T_server.db_prio_read) backends in
-		lwt () = Connection_pool.do_for_all_s ~on_error ~getter:(fun b -> b.Fd_client.regbackend) ~f backends in
-		match !read_bytes with
-			| Some rb ->
-				Lwt.return (Db.Data rb)
-			| None ->
-				Lwt.return eAGAIN
-	with
-		| Not_found ->
-			Lwt.return eBADF
-
-let c_write path buffer offset size dbd =
-	let size = Bigarray.Array1.dim buffer in
-	try
-		let fd = Fd_client.get path in
-		let open T_communication in
-		let saved_counter = ref 0 in
-		let f ~backend ~reg_backend ~row conn =
-			lwt () =
-				if row.Fd_client.regbackend.RegBackend_S.state = RegBackend_S.Valid then
-					match row.Fd_client.remote_fd with
-						| Some remote_fd -> (
-							lwt () = Connection.send_value conn (Cmd.Write (remote_fd, offset, size)) in
-							lwt () = Connection.write_from_bigarray conn buffer 0 size in
-							lwt r = Connection.read_value conn in
-							match r with
-								| Response.Data () ->
-									incr saved_counter;
-									let max_pos = Int64.add offset (Int64.of_int size) in
-									if reg_backend.RegBackend_S.max_valid_pos < max_pos then
-										reg_backend.RegBackend_S.max_valid_pos <- max_pos;
-									Lwt.return ()
-								| Response.UnixError e ->
-									debug "Remote server Unix error: %s" (Unix.error_message e);
-									RegBackend.mark_invalid ~from_pos:offset reg_backend;
-									Lwt.return ()
-								| Response.Error e ->
-									debug "Remote server error: %s" e;
-									RegBackend.mark_invalid ~from_pos:offset reg_backend;
-									Lwt.return ()
-						)
-						| None ->
-							RegBackend.mark_invalid ~from_pos:offset reg_backend;
-							Lwt.return ()
-
-				else
-				begin
-					RegBackend.mark_invalid ~from_pos:offset reg_backend;
-					Lwt.return ()
-				end
-			in
-			Lwt.return true
-		in
-		let on_error ~reg_backend ~row exn =
-			RegBackend.mark_invalid ~from_pos:offset reg_backend;
-			Lwt.return true (* continue *)
-		in
-		let backends = Fd_client.get_all_backends fd in
-		debug "selected %i backends" (List.length backends);
-		lwt () = Connection_pool.do_for_all_s ~on_error ~getter:(fun b -> b.Fd_client.regbackend) ~f backends in
-		if !saved_counter = 0 then
-		begin
-			debug "write failed, written to zero backends";
-			Lwt.return eAGAIN
-		end
-		else
-		begin
-			Metadata.grow ~size:(Int64.add offset (Int64.of_int size)) fd.Fd_client.metadata;
-			Lwt.return (Db.Data size)
-		end
-	with
-		| Not_found ->
-			Lwt.return eBADF
-
-let get_parent_meta path dbd =
-	let parent_path = Filename.dirname path in
-	let parent_path = if parent_path = "" then "/" else parent_path in
-	Metadata.rw_of_path dbd parent_path
-
-let generate_prefix () =
-	Printf.sprintf "__bfs_renamed_%.0f_%i__" (Unix.gettimeofday ()) (Random.int 1000000)
-
-let rec backend_mkdir ?(prefix="") dirname parent_path metadata backend_id dbd =
-	let parent_path = add_slash parent_path in
-	let try_other_name () =
-		let prefix = generate_prefix () in
-		backend_mkdir ~prefix dirname parent_path metadata backend_id dbd
-	in
-	let fullpath = parent_path ^ prefix ^ dirname in
-	try_lwt
-		(* check if element with such name already exists on backend *)
-		let (_ : RegBackend_S.row) = RegBackend.rw_of_backend_and_path ~backend:backend_id ~path:fullpath dbd in
-		try_other_name ()
-	with
-		| Not_found ->
-			let r = ref None in
-			let open T_communication in
-			let f c =
-				lwt res = Connection.request c (Cmd.MkDir fullpath) in
-				r := res;
-				Lwt.return ()
-			in
-			let backend_srv = Backend.of_backend_id backend_id in
-			lwt () = Connection_pool.wrap ~f backend_srv.T_server.addr in
-			match !r with
-				| Some R_MkDir.OK ->
-					let reg = RegBackend.create ~metadata:(Some metadata.Metadata_S.id) ~backend:backend_id fullpath in
-					let id = RegBackend.insert dbd reg in
-					Lwt.return { reg with RegBackend_S.id = id }
-				| Some R_MkDir.AlreadyExists ->
-					try_other_name ()
-				| None ->
-					debug "Call to MkDir on backend wasn't successful";
-					Lwt.fail Connection_pool.NotAvailable
-
-let rec backend_checkdir metadata backend_id dbd =
-	if metadata.Metadata_S.fullname = "/" then
-		Lwt.return "/"
-	else
-		lwt reg_backend =
-			try
-				let r = RegBackend.rw_of_metadata_and_backend ~metadata ~backend:backend_id dbd in
-				(* directory exists, just return *)
-				Lwt.return r
-			with
-				| Not_found ->
-					(* directory have to be created *)
-					let parent_meta = get_parent_meta (metadata.Metadata_S.fullname) dbd in
-					lwt parent_path =
-						if parent_meta.Metadata_S.fullname = "/" then
-							Lwt.return "/"
-							(* OK, root always exist *)
-						else
-						begin
-							(* parent isn't root, check it recursively *)
-							backend_checkdir parent_meta backend_id dbd
-							(* all parents exist, it's time to create directory and return *)
-						end
-					in
-					let dirname = Filename.basename metadata.Metadata_S.fullname in
-					backend_mkdir dirname parent_path metadata backend_id dbd
-		in
-		Lwt.return reg_backend.RegBackend_S.path
-
 let c_create path mode dbd =
-	let parent_meta = get_parent_meta path dbd in
-
-	let open Metadata_S in
-	let meta = Metadata.regular mode path in
-	let meta = { meta with deepness = parent_meta.deepness + 1; required_distribution = parent_meta.required_distribution } in
-	let id = Metadata.insert dbd meta in
-	let backends = Backend.get_best_for_create parent_meta.required_distribution in
-	lwt () = Lwt_list.iter_p (fun backend ->
-		lwt parent_backend_path = backend_checkdir parent_meta backend.T_server.id dbd in
-		let ppath = add_slash parent_backend_path in
-		let basename = Filename.basename path in
-		let rec try_prefix prefix =
-			try
-				let backend_path = ppath ^ prefix ^ basename in
-				let regbackend =  RegBackend.create ~metadata:(Some id) ~backend:backend.T_server.id backend_path in
-				let (_ : int64) = RegBackend.insert dbd regbackend in
-				Lwt.return ()
-			with
-				| _ ->
-					let prefix = generate_prefix () in
-					try_prefix prefix
-		in
-		try_prefix ""
-	) backends in
-	c_fopen path [Unix.O_WRONLY; Unix.O_CREAT] dbd
-
-let c_release path flags fh dbd =
-	debug :1 "close %s" path;
-	try
-		let last_fd = Fd_client.close_file path in
-		lwt () =
-			match last_fd with
-				| Some fd ->
-					let f ~backend ~(reg_backend : Dbt.RegBackend.row) ~(row : Fd_client.backend) conn =
-						match row.Fd_client.remote_fd with
-							| Some remote_fd -> (
-								let open T_communication in
-								lwt r = Connection.request conn (Cmd.FClose remote_fd) in
-								match r with
-									| Response.Data () ->
-										Lwt.return ()
-									| Response.UnixError e ->
-										debug "Remote server Unix error: %s" (Unix.error_message e);
-										Lwt.return ()
-									| Response.Error e ->
-										debug "Remote server error: %s" e;
-										Lwt.return ()
-							)
-							| None ->
-								Lwt.return ()
-					in
-					let on_error ~reg_backend ~row exn = Lwt.return () in
-					let (backends : Fd_client.backend list) = Fd_client.get_all_backends fd in
-					lwt () = Connection_pool.do_for_all_p ~on_error ~getter:(fun b -> b.Fd_client.regbackend) ~f backends in
-					Fd_client.db_sync dbd fd;
-					Fd_client.remove path;
-					Lwt.return ()
-				| None ->
-					Lwt.return ()
-		in
-		Mutex.unlock Fd_client.global_lock;
-		Lwt.return (Db.Data ())
-	with
-		| Not_found ->
-			Mutex.unlock Fd_client.global_lock;
-			Lwt.return eBADF
+	lwt () = Op_create.op_create path mode dbd in
+	Op_open.c_fopen path [Unix.O_WRONLY; Unix.O_CREAT] dbd
 
 let c_flush path fh dbd =
 	try
@@ -562,16 +236,16 @@ let c_truncate path len dbd =
 let c_rename oname nname dbd =
 	let open Metadata_S in
 	let r = Metadata.rw_of_path dbd oname in
-	let parent_meta = get_parent_meta nname dbd in
+	let parent_meta = Op_common.get_parent_meta nname dbd in
 	let success = ref 0 in
 	let f ~backend ~reg_backend ~row conn =
-		lwt parent_backend_path = backend_checkdir parent_meta backend.T_server.id dbd in
-		let ppath = add_slash parent_backend_path in
+		lwt parent_backend_path = Op_common.backend_checkdir parent_meta backend.T_server.id dbd in
+		let ppath = Op_common.add_slash parent_backend_path in
 		let basename = Filename.basename nname in
 		let backend_path_old = reg_backend.RegBackend_S.path in
 		let rec try_prefix prefix =
 			let try_other_prefix () =
-				let prefix = generate_prefix () in
+				let prefix = Op_common.generate_prefix () in
 				try_prefix prefix
 			in
 			let open T_communication in
@@ -585,8 +259,8 @@ let c_rename oname nname dbd =
 					with _ -> ());
 					Dbt.RegBackend.update_by_key dbd { reg_backend with RegBackend_S.path = backend_path_new };
 					(* rename all childs on the backend *)
-					let old_with_slash = add_slash backend_path_old in
-					let new_with_slash = add_slash backend_path_new in
+					let old_with_slash = Op_common.add_slash backend_path_old in
+					let new_with_slash = Op_common.add_slash backend_path_new in
 					let old_length = String.length old_with_slash in
 					lwt () = Db.RW.iter_all dbd
 						("select " ^ RegBackend.cols_string ^ " from " ^ RegBackend.name
@@ -625,8 +299,8 @@ let c_rename oname nname dbd =
 	end;
 
 	(* rename all childs *)
-	let old_with_slash = add_slash oname in
-	let new_with_slash = add_slash nname in
+	let old_with_slash = Op_common.add_slash oname in
+	let new_with_slash = Op_common.add_slash nname in
 	let old_length = String.length old_with_slash in
 	lwt () = Db.RW.iter_all dbd
 		("select " ^ Metadata.cols_string ^ " from " ^ Metadata.name ^ " where fullname like '" ^ (Db.like_escape old_with_slash) ^ "%' for update")
@@ -709,6 +383,7 @@ let () =
 	let (_ : Thread.t) = Thread.create (update_backends_periodically pool) !Config.client_row.Client_S.id in
 	let (_ : Thread.t) = Thread.create Dbt.periodic_processor () in
 	let (_ : Thread.t) = Thread.create gc_periodically () in
+	let (_ : Thread.t) = Thread.create Fixer.periodic_fix_all_backends pool in
 	let fuse_args = Array.of_list (Sys.argv.( 0 ) :: List.rev !Config.fuse_args) in
 	let fTODO = fun _ -> Lwt.return eTODO in
 	main fuse_args { default_operations with
@@ -727,12 +402,12 @@ let () =
 		chown = (fun path uid gid -> in_single (fun () -> rw_wrap "chown" (c_chown path uid gid)));
 		truncate = (fun path len -> in_single (fun () -> rw_wrap "truncate" (c_truncate path len)));
 		utime = (fun path atime mtime -> in_single (fun () -> rw_wrap "utime" (c_utime path atime mtime)));
-		fopen = (fun path flags -> in_single (fun () -> rw_wrap "fopen" (c_fopen path flags)));
-		read = (fun path buffer offset size -> in_single (fun () -> let r = ro_wrap "read" (c_read path buffer offset size) in debug "------- %i" r; r));
-		write = (fun path buffer offset size -> ro_wrap "write" (c_write path buffer offset size));
+		fopen = (fun path flags -> in_single (fun () -> rw_wrap "fopen" (Op_open.c_fopen path flags)));
+		read = (fun path buffer offset size -> in_single (fun () -> let r = ro_wrap "read" (Op_read.c_read path buffer offset size) in debug "------- %i" r; r));
+		write = (fun path buffer offset size -> ro_wrap "write" (Op_write.c_write path buffer offset size));
 		statfs = (fun path -> rw_wrap "statfs" fTODO);
 		flush = (fun path fh -> in_single (fun () -> rw_wrap "flush" (c_flush path fh)));
-		release = (fun path flags fh -> in_single (fun () -> rw_wrap "release" (c_release path flags fh)));
+		release = (fun path flags fh -> in_single (fun () -> rw_wrap "release" (Op_release.c_release path flags fh)));
 		(* fsync *)
 		(* setxattr *)
 		(* getxattr *)

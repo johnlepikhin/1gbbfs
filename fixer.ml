@@ -12,8 +12,8 @@ let q_get_invalid_files backend = "select m.id, m.required_distribution as requi
 		and r2.state = 0 and r2.backend = " ^ (Mysql.ml642int backend) ^ "
 	group by m.id
 	having count(r1.id) > 0 and count(r1.id) < required
-	order by required-count(r1.id) desc
-	limit 1000
+	order by required-count(r1.id) desc, m.size
+	limit 100
 	for update"
 
 let block_size = 100000L
@@ -87,11 +87,16 @@ let fix_invalid_files dbd backend =
 	)
 
 let fix_all_backends pool =
-	Db.rw_wrap pool "fixer" (fun dbd ->
-		lwt () = Lwt_list.iter_s (fun b ->
-			lwt () = Lwt_unix.sleep 10. in
-			lwt _ = fix_invalid_files dbd b.T_server.id in
-			Lwt.return ()
-		) !Backend.best_for_read in
-		Lwt.return (Db.Data ())
-	)
+	List.iter (fun b ->
+		Unix.sleep 10;
+		try
+			Db.rw_wrap pool "fixer" (fun dbd ->
+				lwt _ = fix_invalid_files dbd b.T_server.id in
+				Lwt.return (Db.Data ())
+			)
+		with _ -> ()
+	) !Backend.best_for_read
+
+let rec periodic_fix_all_backends pool =
+	fix_all_backends pool;
+	periodic_fix_all_backends pool

@@ -133,6 +133,10 @@ let get_valid_backends fd =
 	let open Dbt.RegBackend_S in
 	List.filter (fun b -> b.regbackend.state = Valid) fd.backends
 
+let get_invalid_backends fd =
+	let open Dbt.RegBackend_S in
+	List.filter (fun b -> b.regbackend.state <> Valid) fd.backends
+
 let db_sync dbd fd =
 	let open Dbt in
 	let m = Metadata.rw_of_path dbd fd.metadata.Metadata_S.fullname in

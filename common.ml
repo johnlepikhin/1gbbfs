@@ -16,6 +16,8 @@ let backends_update_period = 100
 
 let dead_server_timeout = 5.
 
+let fixer_iteration_timeout = 60.
+
 let bfree_soft_limit_score = -10
 let bfree_hard_limit_score = -10000
 let ffree_soft_limit_score = -10

@@ -54,6 +54,8 @@ let backends = ref []
 
 let best_for_create = ref []
 
+let best_for_read = ref []
+
 let sort_read lst =
 	let open T_server in
 	List.sort (fun a b -> compare (b.db_prio_read + b.local_prio) (a.db_prio_read + b.local_prio)) lst
@@ -84,7 +86,8 @@ let update_backends dbd id =
 		
 	) nlst in
 	backends := nlst;
-	best_for_create := sort_create nlst
+	best_for_create := sort_create nlst;
+	best_for_read := sort_read nlst
 
 let of_backend_id id =
 	List.find (fun b -> b.T_server.id = id) !backends
