@@ -133,9 +133,10 @@ let get_valid_backends fd =
 	let open Dbt.RegBackend_S in
 	List.filter (fun b -> b.regbackend.state = Valid) fd.backends
 
-let get_invalid_backends fd =
-	let open Dbt.RegBackend_S in
-	List.filter (fun b -> b.regbackend.state <> Valid) fd.backends
+let get_invalid_backends (fd : t) =
+	let module R = Dbt.RegBackend_S in
+	let module M = Dbt.Metadata_S in
+	List.filter (fun b -> b.regbackend.R.state <> R.Valid || b.regbackend.R.max_valid_pos < fd.metadata.M.stat.Unix.LargeFile.st_size) fd.backends
 
 let db_sync dbd fd =
 	let open Dbt in

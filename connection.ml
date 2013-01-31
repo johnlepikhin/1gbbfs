@@ -186,9 +186,11 @@ let listen addr acceptor =
 	Lwt_unix.setsockopt l_socket Unix.SO_REUSEADDR true;
 	Lwt_unix.setsockopt l_socket Unix.TCP_NODELAY true;
 	Lwt_unix.bind l_socket (Unix.ADDR_INET (addr.T_server.inet_addr, addr.T_server.port));
-	Lwt_unix.listen l_socket 100;
+	Lwt_unix.listen l_socket 3;
 	let rec loop () =
+		debug "Waiting for connection";
 		lwt (socket, _) = Lwt_unix.accept l_socket in
+		debug "Accepted connection";
 (*
 		let in_channel = Unix.in_channel_of_descr socket in
 		let out_channel = Unix.out_channel_of_descr socket in

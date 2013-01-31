@@ -9,26 +9,33 @@ let create_missing_backends ?parent_meta ~required_distribution ~meta ~meta_id ~
 			| Some parent_meta -> parent_meta
 	in
 
+	debug "required_distribution = %i" required_distribution;
 	let backends = Backend.get_best_for_create required_distribution in
 	lwt () = Lwt_list.iter_p (fun backend ->
 		if List.mem backend.T_server.id existing_backends_ids then
 			Lwt.return ()
 		else
-			lwt parent_backend_path = Op_common.backend_checkdir parent_meta backend.T_server.id dbd in
-			let ppath = Op_common.add_slash parent_backend_path in
-			let basename = Filename.basename meta.fullname in
-			let rec try_prefix prefix =
-				try
-					let backend_path = ppath ^ prefix ^ basename in
-					let regbackend =  RegBackend.create ~metadata:(Some meta_id) ~backend:backend.T_server.id backend_path in
-					let (_ : int64) = RegBackend.insert dbd regbackend in
-					Lwt.return ()
-				with
-					| _ ->
-						let prefix = Op_common.generate_prefix () in
-						try_prefix prefix
-			in
-			try_prefix ""
+			try
+				let (_ : Dbt.RegBackend_S.row) = RegBackend.rw_of_metadata_and_backend ~metadata:meta ~backend:backend.T_server.id dbd in
+				Lwt.return ()
+			with
+				| Not_found ->
+					(* no record for this backend *)
+					lwt parent_backend_path = Op_common.backend_checkdir parent_meta backend.T_server.id dbd in
+					let ppath = Op_common.add_slash parent_backend_path in
+					let basename = Filename.basename meta.fullname in
+					let rec try_prefix prefix =
+						try
+							let backend_path = ppath ^ prefix ^ basename in
+							let regbackend =  RegBackend.create ~metadata:(Some meta_id) ~backend:backend.T_server.id backend_path in
+							let (_ : int64) = RegBackend.insert dbd regbackend in
+							Lwt.return ()
+						with
+							| _ ->
+								let prefix = Op_common.generate_prefix () in
+								try_prefix prefix
+					in
+					try_prefix ""
 	) backends in
 	Lwt.return ()
 

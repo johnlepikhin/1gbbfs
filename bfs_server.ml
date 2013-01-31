@@ -89,6 +89,8 @@ type info = {
 
 module Config = struct
 	let name = ref ""
+
+	let foreground = ref false
 end
 
 let fatal s =
@@ -276,6 +278,7 @@ let rec processor c =
 
 let acceptor backend connection =
 	lwt () = Connection.send_bin_int connection Buildcounter.v in
+	debug "Sent bin version";
 	let c = {
 		connection;
 		backend;
@@ -345,6 +348,7 @@ let args = [
 	"--mysql-port", Arg.Int (fun v -> Common.mysql_config := { !Common.mysql_config with Mysql.dbport = Some v}), "Set MySQL port";
 	"--mysql-user", Arg.String (fun v -> Common.mysql_config := { !Common.mysql_config with Mysql.dbuser = Some v}), "Set MySQL user name";
 	"--mysql-db", Arg.String (fun v -> Common.mysql_config := { !Common.mysql_config with Mysql.dbname = Some v}), "Set MySQL database name";
+	"--foreground", Arg.Set Config.foreground, "Run in foreground";
 ]
 
 let args_usage = "Usage:\n\nbfs_server --name NODE_NAME\n"
@@ -366,5 +370,5 @@ let () =
 			| _ ->
 				fatal (Printf.sprintf "Storage directory '%s' doesn't exist" backend.T_server.storage)
 	end;
-	Lwt_daemon.daemonize ();
+	if not !Config.foreground then Lwt_daemon.daemonize ();
 	daemon pool backend

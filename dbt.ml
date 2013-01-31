@@ -393,12 +393,12 @@ module RegBackend =
 	struct
 		include F(RegBackend_S)
 
-		let ro_all_of_metadata dbd metadata =
-			ro_select_all dbd ("metadata=" ^ (Mysql.ml642int metadata.Metadata_S.id))
+		let ro_all_of_metadata ?lock ?for_update dbd metadata =
+			ro_select_all ?lock ?for_update dbd ("metadata=" ^ (Mysql.ml642int metadata.Metadata_S.id))
 
-		let rw_all_of_metadata dbd metadata =
+		let rw_all_of_metadata ?lock ?for_update dbd metadata =
 			let dbd = Db.RW.to_ro dbd in
-			ro_all_of_metadata dbd metadata
+			ro_all_of_metadata ?lock ?for_update dbd metadata
 
 		let ro_valid_of_metadata dbd metadata =
 			let size = metadata.Metadata_S.stat.Unix.LargeFile.st_size in
