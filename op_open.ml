@@ -59,16 +59,24 @@ let c_fopen path flags dbd =
 									Lwt.return ()
 								| Response.UnixError Unix.ENOENT ->
 									debug "Remote server Unix error: %s" (Unix.error_message Unix.ENOENT);
+									Fd_client.add_backend fd reg_backend backend None;
 									Lwt.return ()
 								| Response.UnixError e ->
+									Fd_client.add_backend fd reg_backend backend None;
 									debug "Remote server Unix error: %s" (Unix.error_message e);
 									Lwt.return ()
 								| Response.Error e ->
+									Fd_client.add_backend fd reg_backend backend None;
 									debug "Remote server error: %s" e;
 									Lwt.return ()
 						in
 						let backends = RegBackend.rw_all_of_metadata dbd r in
-						lwt () = Connection_pool.do_for_all_p ~getter:(fun b -> b) ~f backends in
+						let on_error ~reg_backend ~row _ =
+							let backend = Backend.of_reg_backend reg_backend in
+							Fd_client.add_backend fd reg_backend backend None;
+							Lwt.return ()
+						in
+						lwt () = Connection_pool.do_for_all_p ~on_error ~getter:(fun b -> b) ~f backends in
 						match fd.Fd_client.backends with
 							| [] ->
 								Fd_client.unsafe_remove fd.Fd_client.metadata.Metadata_S.fullname;

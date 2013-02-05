@@ -7,14 +7,14 @@ type do_on =
 	| Invalid
 
 let c_write ?(do_on=All) path buffer offset size dbd =
-	let size = Bigarray.Array1.dim buffer in
 	try
+		let size = if size = 0 then Bigarray.Array1.dim buffer else size in
 		let fd = Fd_client.get path in
 		let open T_communication in
 		let saved_counter = ref 0 in
 		let f ~backend ~reg_backend ~row conn =
 			lwt () =
-				if row.Fd_client.regbackend.RegBackend_S.state = RegBackend_S.Valid || row.Fd_client.regbackend.RegBackend_S.max_valid_pos >= offset then
+				if row.Fd_client.regbackend.RegBackend_S.state = RegBackend_S.Valid || Int64.succ row.Fd_client.regbackend.RegBackend_S.max_valid_pos >= offset then
 					match row.Fd_client.remote_fd with
 						| Some remote_fd -> (
 							lwt () = Connection.send_value conn (Cmd.Write (remote_fd, offset, size)) in

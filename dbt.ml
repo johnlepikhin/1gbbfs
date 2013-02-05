@@ -429,8 +429,14 @@ module RegBackend =
 		let mark_invalid ~from_pos row =
 			let open RegBackend_S in
 			row.state <- NeedSync;
+			debug "Mark file as invalid";
 			if row.max_valid_pos >= from_pos then
 				row.max_valid_pos <- Int64.pred from_pos
+
+		let mark_valid row =
+			let open RegBackend_S in
+			debug "Mark file as valid";
+			row.state <- Valid
 
 		let create ~metadata ~backend path =
 			let open RegBackend_S in

@@ -142,6 +142,11 @@ let db_sync dbd fd =
 	let open Dbt in
 	let m = Metadata.rw_of_path dbd fd.metadata.Metadata_S.fullname in
 	let size = fd.metadata.Metadata_S.stat.Unix.LargeFile.st_size in
-	List.iter (fun b -> RegBackend.update_by_key dbd b.regbackend) fd.backends;
+	List.iter (fun b ->
+		let r = b.regbackend in
+		if r.RegBackend_S.max_valid_pos = size then
+			RegBackend.mark_valid r;
+		RegBackend.update_by_key dbd r
+	) fd.backends;
 	let open Dbt.Metadata_S in
 	Dbt.Metadata.update_by_key dbd { m with stat = { m.stat with Unix.LargeFile.st_size = size }; fh_counter = fd.metadata.fh_counter }
